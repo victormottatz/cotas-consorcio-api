@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cotas de Consórcio</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center my-4"></h1>
+        
+        <!-- Filtros -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <form id="filter-form">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <label for="tipo_bem" class="form-label">Tipo do Bem</label>
+                            <select class="form-select" id="tipo_bem" name="tipo_bem">
+                                <option value="todos">Todos</option>
+                                <option value="veiculo">Auto</option>
+                                <option value="imovel">Imóvel</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="credito" class="form-label">Valor do Crédito</label>
+                            <input type="number" class="form-control" id="credito" name="credito" placeholder="R$">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="entrada" class="form-label">Valor de Entrada</label>
+                            <input type="number" class="form-control" id="entrada" name="entrada" placeholder="R$">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="parcela" class="form-label">Valor da Parcela</label>
+                            <input type="number" class="form-control" id="parcela" name="parcela" placeholder="R$">
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-3">
+                            <label for="disponibilidade" class="form-label">Disponibilidade</label>
+                            <select class="form-select" id="disponibilidade" name="disponibilidade">
+                                <option value="todos">Disponíveis</option>
+                                <option value="reservar">Disponível</option>
+                                <option value="reservado">Reservado</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary">Filtrar</button>
+                            <button type="button" id="limpar-filtros" class="btn btn-secondary ms-2">Limpar</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Lista de cotas -->
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between mb-3">
+                    <h5 class="card-title">Lista de Cotas</h5>
+                    <div>
+                        <button id="btn-somar" class="btn btn-success me-2" disabled>
+                            <i class="bi bi-calculator"></i> Somar Selecionadas
+                        </button>
+                        <button id="btn-compartilhar" class="btn btn-info" disabled>
+                            <i class="bi bi-share"></i> Compartilhar
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th width="50px"></th>
+                                <th>Tipo</th>
+                                <th>Código</th>
+                                <th>Crédito</th>
+                                <th>Entrada</th>
+                                <th>Parcelas</th>
+                                <th>Administradora</th>
+                                <th width="50px"></th>
+                                <th>Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cotas-table-body">
+                            <!-- As cotas serão carregadas aqui via JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Detalhes (apenas um!) -->
+    <div class="modal fade" id="detalhesModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Detalhes da Cota</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="detalhes-cota-body"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Somar (apenas um!) -->
+    <div class="modal fade" id="somarModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Soma das Cotas Selecionadas</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="somar-cotas-body"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Botões Flutuantes -->
+    <div class="botoes-flutuantes">
+        <button id="btn-somar-flutuante" class="botao-flutuante">
+            <i class="bi bi-plus-circle"></i> Somar Cotas
+        </button>
+        <button id="btn-compartilhar-flutuante" class="botao-flutuante">
+            <i class="bi bi-share"></i> Compartilhar
+        </button>
+        <button id="btn-limpar-flutuante" class="botao-flutuante">
+            <i class="bi bi-x-circle"></i> Limpar Filtros
+        </button>
+    </div>
+
+    <!-- Scripts JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="/static/js/scripts.js"></script>
+</body>
+</html>

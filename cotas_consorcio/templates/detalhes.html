@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Detalhes da Cota</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h2>Detalhes da Cota</h2>
+        {% if cota %}
+        <table>
+            <tr><th>ID</th><td>{{ cota.id }}</td></tr>
+            <tr><th>Administradora</th><td>{{ cota.admin }}</td></tr>
+            <tr><th>Grupo</th><td>{{ cota.grupo }}</td></tr>
+            <tr><th>Cota</th><td>{{ cota.numero_cota }}</td></tr>
+            <tr><th>Valor do Crédito</th><td>R$ {{ "{:,.2f}".format(cota.valor_credito) }}</td></tr>
+            <tr><th>Entrada</th><td>R$ {{ "{:,.2f}".format(cota.valor_entrada) }}</td></tr>
+            <tr><th>Parcela</th><td>R$ {{ "{:,.2f}".format(cota.valor_parcela) }}</td></tr>
+            <tr><th>Status</th><td>{{ cota.status }}</td></tr>
+            <tr><th>Observações</th><td>{{ cota.observacoes or "Nenhuma" }}</td></tr>
+        </table>
+        {% else %}
+        <p>Cota não encontrada.</p>
+        {% endif %}
+        <a href="{{ url_for('index') }}">Voltar</a>
+    </div>
+</body>
+</html>
