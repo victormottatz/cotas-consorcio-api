@@ -1,17 +1,28 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify # Removido render_template
 from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
 from datetime import datetime
 import logging
+from cachetools import TTLCache
+from flask_compress import Compress
+from concurrent.futures import ThreadPoolExecutor
+from dateutil.relativedelta import relativedelta
+from flask_cors import CORS # Adicionado import para CORS
 
 # Configuração de logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
-
 app = Flask(__name__)
+Compress(app)  # Ativa compressão Gzip
+cache = TTLCache(maxsize=100, ttl=300)  # Cache com expiração de 5 minutos
+executor = ThreadPoolExecutor(2)  # Pool de threads para operações I/O
+# Configuração do CORS para permitir requisições de outros domínios
+# Para produção, substitua "*" pelos domínios específicos do seu site WordPress e de parceiros.
+# Ex: CORS(app, resources={r"/api/*": {"origins": ["https://seusite.com", "https://parceiro.com"]}})
+CORS(app, resources={r"/api/*": {"origins": "*"}}) # Permite todas as origens para rotas /api/  
 
 # Configuração do Supabase
 try:
@@ -23,154 +34,127 @@ try:
     
     logger.info(f"Conectando ao Supabase em: {SUPABASE_URL}")
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    
-    # Teste de conexão
-    test = supabase.table('cotas').select('*').limit(1).execute()
-    logger.info(f"Conexão bem-sucedida. Exemplo de dados: {test.data}")
+    supabase.table('cotas').select('*').limit(1).execute()  # Teste de conexão
 except Exception as e:
-    logger.error(f"Erro ao conectar com Supabase: {str(e)}")
+    logger.critical(f"Erro ao conectar com Supabase: {str(e)}")
     supabase = None
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+# ==================== ROTAS ====================
+
+@app.route('/health')
+def health_check():
+    """Endpoint para monitoramento de saúde"""
+    try:
+        db_ok = bool(supabase and supabase.table('cotas').select('*').limit(1).execute())
+        return jsonify({
+            "status": "healthy" if db_ok else "degraded",
+            "supabase_connected": db_ok,
+            "timestamp": datetime.now().isoformat(),
+            "cache_size": len(cache)
+        }), 200 if db_ok else 500
+    except Exception as e:
+        return jsonify({"status": "down", "error": str(e)}), 500
+
+    # @app.route('/') # Rota da página principal removida, pois o front-end será servido pelo WordPress
+    # def index():
+    #     """Página principal com template pré-renderizado"""
+    #     cotas = cache.get('cotas_destaque') or []
+    #     if not cotas:
+    #         try:
+    #             cotas = supabase.table('cotas').select('*').limit(4).execute().data
+    #             cache['cotas_destaque'] = cotas
+    #         except Exception as e:
+    #             logger.error(f"Erro ao carregar destaques: {str(e)}")
+    #
+    #     return render_template('index.html', cotas=cotas) # Esta linha também será removida/comentada
+    
 
 @app.route('/api/cotas', methods=['POST'])
 def filter_cotas():
+    """API para filtrar cotas com cache"""
     if not supabase:
-        return jsonify({'error': 'Conexão com o banco de dados não estabelecida'}), 500
+        return jsonify({'error': 'Conexão com o banco não estabelecida'}), 500
     
     try:
-        logger.info("Recebendo requisição para /api/cotas")
-        
         if not request.is_json:
-            return jsonify({'error': 'O conteúdo deve ser JSON'}), 400
+            return jsonify({'error': 'Content-Type deve ser application/json'}), 400
         
         filters = request.get_json() or {}
-        logger.debug(f"Filtros recebidos: {filters}")
+        cache_key = f"cotas_{hash(frozenset(filters.items()))}"
         
-        # Consulta básica
-        query = supabase.table('cotas').select('*')
+        if cache_key in cache:
+            return jsonify(cache[cache_key])
         
-        # Aplicar filtros
+        query = supabase.table('cotas').select('*, administradoras(nome)')
+        
+        # Aplica filtros
         if filters.get('tipo_bem') and filters['tipo_bem'] != 'todos':
             query = query.eq('categoria', filters['tipo_bem'])
-        
-        if filters.get('disponibilidade') and filters['disponibilidade'] != 'todos':
-            if filters['disponibilidade'] == 'disponiveis':
-                query = query.neq('reserva', 'reservado')
-            elif filters['disponibilidade'] == 'reservado':
-                query = query.eq('reserva', 'reservado')
-        
         if filters.get('valor_credito'):
             query = query.gte('valor_credito', str(filters['valor_credito']))
         
-        if filters.get('valor_entrada'):
-            query = query.gte('entrada', str(filters['valor_entrada']))
+        cotas = query.execute().data
+        cache[cache_key] = cotas
         
-        if filters.get('valor_parcela'):
-            query = query.gte('valor_parcela', str(filters['valor_parcela']))
-        
-        # Executar consulta
-        response = query.execute()
-        cotas = response.data
-
-        # Adiciona o nome da administradora em cada cota
-        for cota in cotas:
-            admin_id = cota.get('administradora_id')
-            if admin_id:
-                admin_resp = supabase.table('administradoras').select('nome').eq('id', admin_id).execute()
-                cota['admin'] = admin_resp.data[0]['nome'] if admin_resp.data else 'Desconhecida'
-            else:
-                cota['admin'] = 'Desconhecida'
-
-        logger.info(f"Consulta retornou {len(cotas)} registros")
         return jsonify(cotas)
         
     except Exception as e:
-        logger.error(f"Erro ao processar requisição: {str(e)}", exc_info=True)
-        return jsonify({'error': 'Erro interno ao processar a requisição'}), 500
+        logger.error(f"Erro em /api/cotas: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Erro interno'}), 500
 
 @app.route('/api/detalhes_cota/<int:cota_id>')
 def detalhes_cota(cota_id):
-    if not supabase:
-        print("Supabase não conectado")
-        return jsonify({'error': 'Conexão com o banco de dados não estabelecida'}), 500
-
+    """Endpoint com cálculos financeiros usando thread separada"""
+    if not supabase or not isinstance(cota_id, int) or cota_id <= 0:
+        return jsonify({'error': 'Parâmetros inválidos'}), 400
+    
     try:
-        print(f"ID recebido: {cota_id}")
-        response = supabase.table('cotas').select('*').eq('id', cota_id).execute()
-        print(f"Resposta do banco: {response.data}")
-
-        if not response.data:
-            print("Cota não encontrada")
+        def _fetch_cota():
+            response = supabase.table('cotas').select('*, administradoras(nome)').eq('id', cota_id).execute()
+            if not response.data:
+                return None
+            return response.data[0]
+        
+        cota = executor.submit(_fetch_cota).result()
+        if not cota:
             return jsonify({'error': 'Cota não encontrada'}), 404
-
-        cota = response.data[0]
-
-        # Adiciona o nome da administradora
-        admin_id = cota.get('administradora_id')
-        if admin_id:
-            admin_resp = supabase.table('administradoras').select('nome').eq('id', admin_id).execute()
-            cota['admin'] = admin_resp.data[0]['nome'] if admin_resp.data else 'Desconhecida'
-        else:
-            cota['admin'] = 'Desconhecida'
-
-        # Calcular data de vencimento
-        try:
-            dia_vencimento = int(cota.get('vencimento', 1))
-        except Exception as e:
-            print(f"Erro ao converter vencimento: {e}")
-            dia_vencimento = 1
-        hoje = datetime.now()
-
-        if hoje.day > dia_vencimento:
-            mes_prox = hoje.month + 1
-            ano_prox = hoje.year
-            if mes_prox > 12:
-                mes_prox = 1
-                ano_prox += 1
-            data_prox = f"{dia_vencimento:02d}/{mes_prox:02d}/{ano_prox}"
-        else:
-            data_prox = f"{dia_vencimento:02d}/{hoje.month:02d}/{hoje.year}"
-
+        
         # Cálculos financeiros
-        try:
-            credito = float(cota.get('valor_credito', 0))
-            entrada = float(cota.get('entrada', 0))
-            comissao = (credito * 0.085) + entrada
-            entradaporcem = (comissao / credito) * 100 if credito != 0 else 0
-
-            credito_real = credito - comissao
-            saldo = float(cota.get('saldo', 0))
-            valor_final = comissao + saldo
-            taxa = saldo - credito_real
-            taxaporcem = (taxa / credito_real) * 100 if credito_real != 0 else 0
-            parcelas = int(cota.get('parcelas', 1))
-            JMensal = taxaporcem / parcelas if parcelas != 0 else 0
-            JAnual = JMensal * 12
-        except (KeyError, ValueError, TypeError) as e:
-            print(f"Erro nos dados da cota: {str(e)}")
-            return jsonify({'error': f'Erro nos dados da cota: {str(e)}'}), 400
-
-        print("Dados calculados com sucesso")
+        credito = float(cota.get('valor_credito', 0))
+        entrada = float(cota.get('entrada', 0))
+        saldo = float(cota.get('saldo', 0))
+        parcelas = int(cota.get('parcelas', 1))
+        
+        # Comissão (8.5% do crédito + entrada)
+        comissao = (credito * 0.085) + entrada
+        
+        # Próxima parcela (com dateutil para precisão)
+        dia_vencimento = int(cota.get('vencimento', 1))
+        proxima_data = datetime.now() + relativedelta(months=1, day=dia_vencimento)
+        
+        # Cálculos conforme solicitado
+        valor_final = saldo + entrada
+        valor_taxa = valor_final - credito
+        porcentagem_taxa = (valor_taxa / credito) * 100 if credito != 0 else 0
+        juros_mes = porcentagem_taxa / 100 * parcelas
+        juros_ano = porcentagem_taxa / 100 * 12
+        
         return jsonify({
             'cota': cota,
-            'data_prox_parcela': data_prox,
+            'data_prox_parcela': proxima_data.strftime("%d/%m/%Y"),
+            'credito_real': credito - comissao,
             'comissao': comissao,
-            'entradaporcem': entradaporcem,
-            'credito_real': credito_real,
+            'entradaporcem': (comissao / credito) * 100 if credito else 0,
             'valor_final': valor_final,
-            'taxa': taxa,
-            'taxaporcem': taxaporcem,
-            'JMensal': JMensal,
-            'JAnual': JAnual
+            'valor_taxa': valor_taxa,
+            'porcentagem_taxa': porcentagem_taxa,
+            'juros_mes': juros_mes,
+            'juros_ano': juros_ano
         })
-
+        
     except Exception as e:
-        print(f"Erro ao buscar detalhes da cota: {str(e)}")
-        logger.error(f"Erro ao buscar detalhes da cota: {str(e)}")
-        return jsonify({'error': 'Erro interno ao processar a requisição'}), 500
+        logger.error(f"Erro em detalhes_cota: {str(e)}")
+        return jsonify({'error': 'Erro interno'}), 500
     
 @app.route('/api/somar_cotas', methods=['POST'])
 def somar_cotas():
@@ -195,7 +179,7 @@ def somar_cotas():
             for campo in ['valor_credito', 'entrada', 'saldo', 'parcelas', 'valor_parcela', 'administradora_id', 'categoria', 'vencimento', 'codigo']:
                 if campo not in c or c[campo] is None:
                     print(f"Campo ausente ou nulo: {campo} na cota {c.get('id')}")
-                    return jsonify({'error': f'Campo ausente ou nulo: {campo} na cota {c.get('id')}' }), 400
+                    return jsonify({'error': f"Campo ausente ou nulo: {campo} na cota {c.get('id')}" }), 400
         
         primeira_admin = cotas[0]['administradora_id']
         primeira_categoria = cotas[0]['categoria']
@@ -332,3 +316,4 @@ def iniciar_negociacao():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
